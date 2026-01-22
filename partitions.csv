@@ -1,0 +1,16 @@
+# ESP-IDF Partition Table
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: Sizes are in bytes, can use K or M suffix
+
+# NVS (Non-Volatile Storage) - stores WiFi credentials, settings, etc.
+nvs,      data, nvs,     0x9000,  0x6000,
+
+# PHY calibration data
+phy_init, data, phy,     0xf000,  0x1000,
+
+# Factory application partition (where our app lives)
+# 4MB should be plenty for most applications
+factory,  app,  factory, 0x10000, 0x400000,
+
+# Storage partition for any files you want to store
+storage,  data, spiffs,  ,        0x100000,
