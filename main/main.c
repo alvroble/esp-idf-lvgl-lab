@@ -34,7 +34,7 @@
 #include "esp_lcd_st7796.h"
 
 // Touch driver
-#include "esp_lcd_touch_ft5x06.h"
+#include "esp_lcd_touch_ft6336.h"
 
 // I/O Expander (controls LCD reset on this board)
 #include "esp_io_expander_tca9554.h"
@@ -48,6 +48,14 @@
 
 // Our board-specific pin configuration
 #include "board_config.h"
+
+// UI Colors (standard RGB hex values)
+#define COLOR_BG_DARK       0x1a1a1a    // dark purple-gray
+#define COLOR_HEADER        0x16213e    // dark navy
+#define COLOR_ACCENT        0xe94560    // pink/red
+#define COLOR_BLACK         0x0f0f0f    // near black
+#define COLOR_GREEN         0x00ff00    // green
+#define COLOR_RED           0xff0000    // red
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -63,16 +71,19 @@ static i2c_master_bus_handle_t i2c_bus_handle = NULL;
 static esp_io_expander_handle_t io_expander_handle = NULL;
 
 // LVGL display handle
-static lv_display_t *lvgl_disp = NULL;
+static lv_disp_t *lvgl_disp = NULL;
 
 // LVGL image widget that will show the camera feed
 static lv_obj_t *camera_canvas = NULL;
 
 // Image descriptor for LVGL (describes the camera frame format)
-static lv_image_dsc_t camera_img_dsc;
+static lv_img_dsc_t camera_img_dsc;
 
 // Buffer to hold the converted RGB565 image for display
 static uint16_t *rgb565_buffer = NULL;
+
+// Grayscale mode flag (toggled by UI switch)
+static bool grayscale_mode = false;
 
 // ============================================================================
 // STEP 1: I2C BUS INITIALIZATION (Shared)
@@ -221,9 +232,6 @@ static void init_lcd_panel(esp_lcd_panel_handle_t *panel_handle,
     // Invert colors (required for this display)
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(*panel_handle, true));
 
-    // Mirror the display horizontally to correct orientation
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(*panel_handle, true, false));
-
     // Turn on the display
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(*panel_handle, true));
 
@@ -276,7 +284,7 @@ static void init_touch_panel(esp_lcd_touch_handle_t *touch_handle)
         },
     };
 
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(io_handle, &touch_cfg, touch_handle));
+    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft6336(io_handle, &touch_cfg, touch_handle));
 
     ESP_LOGI(TAG, "Touch panel initialized successfully");
 }
@@ -308,13 +316,13 @@ static void init_lvgl(esp_lcd_panel_handle_t panel_handle,
         .monochrome = false,
         .rotation = {
             .swap_xy = false,
-            .mirror_x = false,
+            .mirror_x = true,
             .mirror_y = false,
         },
         .flags = {
             .buff_dma = false,
             .buff_spiram = true,
-            .sw_rotate = true,
+            .sw_rotate = false,
         },
     };
 
@@ -416,6 +424,27 @@ static esp_err_t init_camera(void)
 }
 
 // ============================================================================
+// GRAYSCALE TOGGLE CALLBACK
+// ============================================================================
+/**
+ * @brief Callback for grayscale toggle button
+ */
+static void grayscale_btn_cb(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    grayscale_mode = !grayscale_mode;
+
+    // Update button appearance
+    if (grayscale_mode) {
+        lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    } else {
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x555555), LV_PART_MAIN);
+    }
+
+    ESP_LOGI(TAG, "Grayscale mode: %s", grayscale_mode ? "ON" : "OFF");
+}
+
+// ============================================================================
 // STEP 7: CREATE THE UI
 // ============================================================================
 /**
@@ -429,17 +458,44 @@ static void create_ui(void)
     lvgl_port_lock(0);
 
     // Get the active screen
-    lv_obj_t *screen = lv_screen_active();
+    lv_obj_t *screen = lv_scr_act();
 
-    // Set screen background color to black
-    lv_obj_set_style_bg_color(screen, lv_color_black(), LV_PART_MAIN);
+    // Set screen background to dark gray
+    lv_obj_set_style_bg_color(screen, lv_color_hex(COLOR_BG_DARK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
 
-    // Create a title label
-    lv_obj_t *title = lv_label_create(screen);
-    lv_label_set_text(title, "Camera Stream Demo");
-    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+    // Create a header bar
+    lv_obj_t *header = lv_obj_create(screen);
+    lv_obj_set_size(header, LCD_H_RES, 40);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(COLOR_HEADER), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(header, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(header, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(header, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Create a title label in the header
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "Camera Stream");
+    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 15, 0);
+
+    // Create B/W toggle switch in header
+    lv_obj_t *bw_switch = lv_switch_create(header);
+    lv_obj_set_size(bw_switch, 40, 20);
+    lv_obj_align(bw_switch, LV_ALIGN_RIGHT_MID, -50, 0);
+    lv_obj_set_style_bg_color(bw_switch, lv_color_hex(0x555555), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bw_switch, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(bw_switch, grayscale_btn_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Create B/W label next to switch
+    lv_obj_t *bw_label = lv_label_create(header);
+    lv_label_set_text(bw_label, "B/W");
+    lv_obj_set_style_text_color(bw_label, lv_color_hex(0xaaaaaa), LV_PART_MAIN);
+    lv_obj_set_style_text_font(bw_label, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(bw_label, LV_ALIGN_RIGHT_MID, -10, 0);
 
     // Allocate buffer for camera image (QVGA = 320x240, RGB565 = 2 bytes per pixel)
     const size_t img_width = 320;
@@ -453,25 +509,56 @@ static void create_ui(void)
         return;
     }
 
-    // Initialize image descriptor for LVGL
-    camera_img_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-    camera_img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    // Initialize image descriptor for LVGL (LVGL 8 format)
+    camera_img_dsc.header.always_zero = 0;
+    camera_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
     camera_img_dsc.header.w = img_width;
     camera_img_dsc.header.h = img_height;
     camera_img_dsc.data_size = buffer_size;
     camera_img_dsc.data = (const uint8_t *)rgb565_buffer;
 
-    // Create an image widget for the camera feed
-    camera_canvas = lv_image_create(screen);
-    lv_image_set_src(camera_canvas, &camera_img_dsc);
-    lv_obj_align(camera_canvas, LV_ALIGN_CENTER, 0, 15);
+    // Create a container for the camera feed with border
+    lv_obj_t *cam_container = lv_obj_create(screen);
+    lv_obj_set_size(cam_container, img_width - 8, img_height - 8);
+    lv_obj_align(cam_container, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_style_bg_color(cam_container, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(cam_container, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(cam_container, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_width(cam_container, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(cam_container, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(cam_container, 2, LV_PART_MAIN);
+    lv_obj_clear_flag(cam_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Create FPS label at the bottom
-    lv_obj_t *fps_label = lv_label_create(screen);
+    // Create an image widget for the camera feed inside the container
+    camera_canvas = lv_img_create(cam_container);
+    lv_img_set_src(camera_canvas, &camera_img_dsc);
+    lv_obj_center(camera_canvas);
+
+    // Create a footer bar
+    lv_obj_t *footer = lv_obj_create(screen);
+    lv_obj_set_size(footer, LCD_H_RES, 30);
+    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(footer, lv_color_hex(COLOR_HEADER), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(footer, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(footer, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(footer, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Create FPS label in footer
+    lv_obj_t *fps_label = lv_label_create(footer);
     lv_label_set_text(fps_label, "FPS: --");
-    lv_obj_set_style_text_color(fps_label, lv_color_make(0, 255, 0), LV_PART_MAIN);
-    lv_obj_align(fps_label, LV_ALIGN_BOTTOM_MID, 20, -10);
+    lv_obj_set_style_text_color(fps_label, lv_color_hex(COLOR_GREEN), LV_PART_MAIN);
+    lv_obj_set_style_text_font(fps_label, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(fps_label, LV_ALIGN_RIGHT_MID, -15, 0);
     lv_obj_set_user_data(screen, fps_label);  // Store reference for later updates
+
+    // Create status label in footer
+    lv_obj_t *status_label = lv_label_create(footer);
+    lv_label_set_text(status_label, "LIVE");
+    lv_obj_set_style_text_color(status_label, lv_color_hex(COLOR_RED), LV_PART_MAIN);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(status_label, LV_ALIGN_LEFT_MID, 15, 0);
 
     // Unlock LVGL mutex
     lvgl_port_unlock();
@@ -506,11 +593,35 @@ static void camera_stream_task(void *param)
         if (fb->format == PIXFORMAT_RGB565) {
             // Lock LVGL mutex
             if (lvgl_port_lock(10)) {
-                // Copy frame data directly to our buffer
-                memcpy(rgb565_buffer, fb->buf, fb->len);
+                // Copy frame data to our buffer
+                if (grayscale_mode) {
+                    // Convert RGB565 to grayscale
+                    // Data format matches color mode (no byte swap needed)
+                    uint16_t *src = (uint16_t *)fb->buf;
+                    size_t pixel_count = fb->len / 2;
+                    for (size_t i = 0; i < pixel_count; i++) {
+                        uint16_t pixel = src[i];
+                        // Extract RGB components (RGB565 format as stored)
+                        // The format is: GGGBBBBB RRRRRGGG (byte-swapped RGB565)
+                        uint8_t r = (pixel >> 3) & 0x1F;         // bits 3-7 of low byte
+                        uint8_t g = ((pixel & 0x07) << 3) | ((pixel >> 13) & 0x07);  // bits 0-2 of low + bits 5-7 of high
+                        uint8_t b = (pixel >> 8) & 0x1F;         // bits 0-4 of high byte
+                        // Convert to grayscale using luminance formula
+                        uint8_t gray = (uint8_t)(((r * 8) * 77 + (g * 4) * 150 + (b * 8) * 29) >> 8);
+                        // Convert back to RGB565 grayscale in same format
+                        uint8_t gray5 = gray >> 3;
+                        uint8_t gray6 = gray >> 2;
+                        // Reconstruct in same byte-swapped format
+                        rgb565_buffer[i] = ((gray5 & 0x1F) << 3) | ((gray6 >> 3) & 0x07) |
+                                          ((gray5 & 0x1F) << 8) | ((gray6 & 0x07) << 13);
+                    }
+                } else {
+                    // Color mode - direct copy
+                    memcpy(rgb565_buffer, fb->buf, fb->len);
+                }
 
                 // Tell LVGL the image has changed
-                lv_image_set_src(camera_canvas, &camera_img_dsc);
+                lv_img_set_src(camera_canvas, &camera_img_dsc);
                 lv_obj_invalidate(camera_canvas);
 
                 // Update FPS counter every second
@@ -518,10 +629,10 @@ static void camera_stream_task(void *param)
                 int64_t now = esp_timer_get_time();
                 if (now - last_fps_time >= 1000000) {  // 1 second in microseconds
                     float fps = (float)frame_count * 1000000.0f / (float)(now - last_fps_time);
-                    lv_obj_t *screen = lv_screen_active();
+                    lv_obj_t *screen = lv_scr_act();
                     lv_obj_t *fps_label = (lv_obj_t *)lv_obj_get_user_data(screen);
                     if (fps_label != NULL) {
-                        lv_label_set_text_fmt(fps_label, "FPS: %.1f", fps);
+                        lv_label_set_text_fmt(fps_label, "FPS: %d", (int)fps);
                     }
                     frame_count = 0;
                     last_fps_time = now;

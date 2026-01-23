@@ -61,6 +61,9 @@ CONFIG_LV_LOG_LEVEL_WARN=y
 # Color depth (16-bit RGB565)
 CONFIG_LV_COLOR_DEPTH_16=y
 
+# Swap bytes for correct color display on this LCD
+CONFIG_LV_COLOR_16_SWAP=y
+
 # Enable fonts we need
 CONFIG_LV_FONT_MONTSERRAT_20=y
 

@@ -1,18 +1,20 @@
 ## IDF Component Manager Manifest File
-## This file declares the dependencies for this project
+## Using same versions as Waveshare factory demo for compatibility
 
 dependencies:
-  # LVGL graphics library
-  lvgl/lvgl: "~9.2.0"
+  idf: ">=5.1"
 
-  # ESP-IDF port for LVGL (simplifies setup)
-  espressif/esp_lvgl_port: "^2.4.0"
+  # LVGL 8.4.0 (same as factory demo - LVGL 9 has different color handling)
+  lvgl/lvgl: "~8.4.0"
+
+  # ESP-IDF port for LVGL
+  espressif/esp_lvgl_port: "^2.5.0"
+
+  # LCD touch driver
+  espressif/esp_lcd_touch: "^1.1.2"
 
   # Camera driver for ESP32
   espressif/esp32-camera: "^2.0.0"
-
-  # LCD touch driver - FT6336 (used by Waveshare 3.5" display)
-  espressif/esp_lcd_touch_ft5x06: "^1.0.0"
 
   # ST7796 LCD driver (used by Waveshare 3.5" display)
   espressif/esp_lcd_st7796: "^1.0.0"

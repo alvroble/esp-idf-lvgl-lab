@@ -6,4 +6,6 @@ idf_component_register(
         esp_timer
         driver
         esp_psram
+    PRIV_REQUIRES
+        esp_lcd_touch_ft6336
 )
