@@ -8,4 +8,5 @@ idf_component_register(
         esp_psram
     PRIV_REQUIRES
         esp_lcd_touch_ft6336
+        ui
 )
