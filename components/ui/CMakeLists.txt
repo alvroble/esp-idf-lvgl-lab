@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "ui.c"
+        "ui_screen_camera.c"
+    INCLUDE_DIRS
+        "include"
+        "."
+    REQUIRES
+        esp_lcd
+    PRIV_REQUIRES
+        esp_psram
+)
