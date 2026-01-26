@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -62,6 +63,19 @@ ui_screen_t ui_get_current_screen(void);
  * @param grayscale If true, convert to grayscale
  */
 void ui_camera_update_frame(const uint8_t *frame_data, size_t len, bool grayscale);
+
+/**
+ * @brief Configure the camera frame format used by the UI
+ *
+ * Call this before pushing frames (or whenever the camera format changes).
+ * The UI will resize its image buffer and descriptor to match.
+ *
+ * @param width Frame width in pixels
+ * @param height Frame height in pixels
+ * @param len Frame buffer length in bytes
+ * @return ESP_OK on success
+ */
+esp_err_t ui_camera_set_frame_format(uint32_t width, uint32_t height, size_t len);
 
 /**
  * @brief Update the FPS display

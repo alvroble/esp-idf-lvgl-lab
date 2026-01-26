@@ -3,6 +3,7 @@
  * @brief UI Component Internal Common Definitions
  *
  * Internal header with shared definitions for UI screens.
+ * Supports LVGL 9 API
  */
 
 #pragma once
@@ -30,14 +31,14 @@ extern "C" {
 // ============================================================================
 // UI Dimensions
 // ============================================================================
-#define UI_HEADER_HEIGHT       40
-#define UI_FOOTER_HEIGHT       30
+#define UI_HEADER_HEIGHT       50
+#define UI_FOOTER_HEIGHT       40
 
 // ============================================================================
-// Camera Screen Dimensions
+// Camera Screen Dimensions (OV5647 on ESP32-P4: 800x640)
 // ============================================================================
-#define UI_CAMERA_WIDTH        320
-#define UI_CAMERA_HEIGHT       240
+#define UI_CAMERA_WIDTH        640
+#define UI_CAMERA_HEIGHT       480
 
 #ifdef __cplusplus
 }

@@ -1,16 +1,14 @@
-# ESP-IDF Partition Table
+# ESP-IDF Partition Table for ESP32-P4 (32MB Flash)
 # Name,   Type, SubType, Offset,  Size, Flags
-# Note: Sizes are in bytes, can use K or M suffix
 
-# NVS (Non-Volatile Storage) - stores WiFi credentials, settings, etc.
+# NVS (Non-Volatile Storage) - stores settings, etc.
 nvs,      data, nvs,     0x9000,  0x6000,
 
 # PHY calibration data
 phy_init, data, phy,     0xf000,  0x1000,
 
-# Factory application partition (where our app lives)
-# 4MB should be plenty for most applications
-factory,  app,  factory, 0x10000, 0x400000,
+# Factory application partition (8MB for ESP32-P4)
+factory,  app,  factory, 0x10000, 0x800000,
 
-# Storage partition for any files you want to store
-storage,  data, spiffs,  ,        0x100000,
+# Storage partition for any files
+storage,  data, spiffs,  ,        0x700000,

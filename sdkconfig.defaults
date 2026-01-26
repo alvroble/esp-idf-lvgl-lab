@@ -1,99 +1,93 @@
 # =============================================================================
-# ESP32-S3 Camera LCD Demo - SDK Configuration Defaults
+# ESP32-P4 Camera LCD Demo - SDK Configuration Defaults
 # =============================================================================
-# This file contains the default configuration for the project.
-# These settings are applied when you run 'idf.py set-target esp32s3'
+# Target: Waveshare ESP32-P4-WiFi6-Touch-LCD-4B
+# Display: 4" 720x720 ST7703 via MIPI DSI
+# Touch: GT911 capacitive
+# Camera: OV5647 via MIPI CSI
 
 # -----------------------------------------------------------------------------
 # Target Selection
 # -----------------------------------------------------------------------------
-CONFIG_IDF_TARGET="esp32s3"
+CONFIG_IDF_TARGET="esp32p4"
 
-# -----------------------------------------------------------------------------
-# ESP32-S3 Specific Settings
-# -----------------------------------------------------------------------------
-# Set the CPU frequency to 240MHz for best performance
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
-
-# -----------------------------------------------------------------------------
-# PSRAM Configuration (CRITICAL for camera!)
-# -----------------------------------------------------------------------------
-# The ESP32-S3-Touch-LCD-3.5 has 8MB PSRAM which is essential for camera buffers
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
-
-# Allow allocating large buffers in PSRAM
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
-
-# Enable heap allocation in PSRAM
-CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+# Enable experimental features (required for ESP32-P4)
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 
 # -----------------------------------------------------------------------------
 # Flash Configuration
 # -----------------------------------------------------------------------------
-# The board has 16MB flash
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
-CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
 
 # -----------------------------------------------------------------------------
 # Partition Table
 # -----------------------------------------------------------------------------
-# Use larger partition for app (16MB flash allows more space)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # -----------------------------------------------------------------------------
-# Camera Configuration
+# Compiler Configuration
 # -----------------------------------------------------------------------------
-# Enable camera driver
-CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=32768
-
-# -----------------------------------------------------------------------------
-# LVGL Configuration
-# -----------------------------------------------------------------------------
-# Enable LVGL logging for debugging (disable in production for performance)
-CONFIG_LV_USE_LOG=y
-CONFIG_LV_LOG_LEVEL_WARN=y
-
-# Color depth (16-bit RGB565)
-CONFIG_LV_COLOR_DEPTH_16=y
-
-# Swap bytes for correct color display on this LCD
-CONFIG_LV_COLOR_16_SWAP=y
-
-# Enable fonts we need
-CONFIG_LV_FONT_MONTSERRAT_20=y
-
-# Performance optimizations
-CONFIG_LV_USE_PERF_MONITOR=n
-CONFIG_LV_USE_MEM_MONITOR=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_APP_REPRODUCIBLE_BUILD=y
 
 # -----------------------------------------------------------------------------
-# FreeRTOS Configuration
+# PSRAM Configuration
 # -----------------------------------------------------------------------------
-# Increase timer task stack size (needed for LVGL timer callbacks)
-CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
-# Enable FreeRTOS assertions for debugging
-CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
+# -----------------------------------------------------------------------------
+# Cache Configuration (ESP32-P4 specific)
+# -----------------------------------------------------------------------------
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
 
 # -----------------------------------------------------------------------------
 # Memory Configuration
 # -----------------------------------------------------------------------------
-# Increase main task stack size
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=10240
 
 # -----------------------------------------------------------------------------
-# Compiler Configuration
+# FreeRTOS Configuration
 # -----------------------------------------------------------------------------
-# Optimize for performance
-CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# -----------------------------------------------------------------------------
+# SPI Flash Configuration
+# -----------------------------------------------------------------------------
+CONFIG_SPI_FLASH_SUPPORT_GD_CHIP=y
+
+# -----------------------------------------------------------------------------
+# Camera Configuration (OV5647 via MIPI CSI)
+# -----------------------------------------------------------------------------
+CONFIG_CAMERA_OV5647=y
+CONFIG_CAMERA_OV5647_MIPI_RAW8_800X640_50FPS=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+
+# -----------------------------------------------------------------------------
+# LVGL Configuration (Version 9)
+# -----------------------------------------------------------------------------
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_DEF_REFR_PERIOD=15
+CONFIG_LV_OS_FREERTOS=y
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_36=y
+CONFIG_LV_USE_QRCODE=y
+CONFIG_LV_BUILD_EXAMPLES=n
+CONFIG_LV_BUILD_DEMOS=n
 
 # -----------------------------------------------------------------------------
 # Log Configuration
 # -----------------------------------------------------------------------------
-# Set default log level to Info (change to DEBUG for more verbose output)
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

@@ -3,6 +3,7 @@
  * @brief UI Component Main Implementation
  *
  * This file manages screen navigation and initialization.
+ * Uses LVGL 9 API
  */
 
 #include "ui.h"
@@ -44,10 +45,10 @@ esp_err_t ui_init(void)
     // Create all screens
     ui_screen_camera_create();
 
-    // Load the default screen (camera)
+    // Load the default screen (camera) - LVGL 9 uses lv_screen_load
     lv_obj_t *camera_scr = ui_screen_camera_get();
     if (camera_scr != NULL) {
-        lv_scr_load(camera_scr);
+        lv_screen_load(camera_scr);
     }
 
     // Unlock LVGL
@@ -87,7 +88,7 @@ esp_err_t ui_navigate_to(ui_screen_t screen)
     }
 
     if (target_screen != NULL) {
-        lv_scr_load_anim(target_screen, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+        lv_screen_load_anim(target_screen, LV_SCR_LOAD_ANIM_FADE_IN, 300, 0, false);
         current_screen = screen;
     }
 

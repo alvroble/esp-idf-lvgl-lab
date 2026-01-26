@@ -7,6 +7,7 @@ idf_component_register(
         driver
         esp_psram
     PRIV_REQUIRES
-        esp_lcd_touch_ft6336
+        waveshare_bsp
+        video
         ui
 )

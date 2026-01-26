@@ -1,4 +1,4 @@
 dependencies:
-  idf: ">=5.1"
-  lvgl/lvgl: "~8.4.0"
-  espressif/esp_lvgl_port: "^2.5.0"
+  idf: ">=5.4"
+  lvgl/lvgl: ">=9,<10"
+  espressif/esp_lvgl_port: "^2"

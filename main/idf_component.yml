@@ -1,23 +1,25 @@
 ## IDF Component Manager Manifest File
-## Using same versions as Waveshare factory demo for compatibility
+## ESP32-P4 Camera Stream Demo for Waveshare ESP32-P4-WiFi6-Touch-LCD-4B
 
 dependencies:
-  idf: ">=5.1"
+  idf: ">=5.4"
 
-  # LVGL 8.4.0 (same as factory demo - LVGL 9 has different color handling)
-  lvgl/lvgl: "~8.4.0"
+  # LVGL 9.x for ESP32-P4
+  lvgl/lvgl: ">=9,<10"
 
   # ESP-IDF port for LVGL
-  espressif/esp_lvgl_port: "^2.5.0"
+  espressif/esp_lvgl_port: "^2"
 
-  # LCD touch driver
-  espressif/esp_lcd_touch: "^1.1.2"
+  # LCD touch driver base
+  espressif/esp_lcd_touch: "^1"
 
-  # Camera driver for ESP32
-  espressif/esp32-camera: "^2.0.0"
+  # GT911 touch controller driver
+  espressif/esp_lcd_touch_gt911: "^1"
 
-  # ST7796 LCD driver (used by Waveshare 3.5" display)
-  espressif/esp_lcd_st7796: "^1.0.0"
+  # ST7703 LCD driver (MIPI DSI)
+  waveshare/esp_lcd_st7703: "*"
 
-  # I/O Expander - TCA9554 (controls LCD reset on this board)
-  espressif/esp_io_expander_tca9554: "^2.0.0"
+  # Video/Camera drivers for ESP32-P4
+  espressif/esp_video: "^1"
+  espressif/esp_cam_sensor: "^1"
+  espressif/esp_sccb_intf: "*"

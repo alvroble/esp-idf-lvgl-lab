@@ -1,524 +1,255 @@
 /**
  * @file main.c
- * @brief Camera Stream Demo for Waveshare ESP32-S3-Touch-LCD-3.5
+ * @brief Camera Stream Demo for Waveshare ESP32-P4-WiFi6-Touch-LCD-4B
  *
- * This is a beginner-friendly example that demonstrates:
- * 1. How to initialize an LCD display using ESP-IDF's esp_lcd component
- * 2. How to set up LVGL (Light and Versatile Graphics Library)
- * 3. How to capture frames from a camera using esp32-camera
- * 4. How to display the camera feed on the LCD using LVGL
- *
- * The code is heavily commented to serve as a learning tutorial.
+ * This application demonstrates:
+ * - MIPI DSI display initialization via BSP
+ * - GT911 touch controller via BSP
+ * - OV5647 camera streaming via V4L2/MIPI CSI
+ * - LVGL 9 UI with camera preview
  */
 
 #include <stdio.h>
 #include <string.h>
-
-// FreeRTOS includes (ESP-IDF uses FreeRTOS for multitasking)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
-
-// ESP-IDF system includes
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 
-// LCD and display driver includes
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
-#include "driver/i2c_master.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_lcd_st7796.h"
+// BSP includes (handles display, touch, I2C)
+#include "bsp/esp-bsp.h"
 
-// Touch driver
-#include "esp_lcd_touch_ft6336.h"
+// Video component (V4L2 camera interface)
+#include "video.h"
 
-// I/O Expander (controls LCD reset on this board)
-#include "esp_io_expander_tca9554.h"
-
-// LVGL includes
-#include "lvgl.h"
-#include "esp_lvgl_port.h"
-
-// Camera driver
-#include "esp_camera.h"
-
-// Our board-specific pin configuration
-#include "board_config.h"
-
-// UI Component
+// UI component
 #include "ui.h"
 
-// ============================================================================
-// GLOBAL VARIABLES
-// ============================================================================
-
-// Tag for ESP-IDF logging (helps identify where log messages come from)
-static const char *TAG = "CameraLCD";
-
-// I2C bus handle (shared between touch and camera)
-static i2c_master_bus_handle_t i2c_bus_handle = NULL;
-
-// I/O Expander handle (controls LCD reset)
-static esp_io_expander_handle_t io_expander_handle = NULL;
-
-// LVGL display handle
-static lv_disp_t *lvgl_disp = NULL;
+static const char *TAG = "main";
 
 // ============================================================================
-// STEP 1: I2C BUS INITIALIZATION (Shared)
+// Configuration
 // ============================================================================
+
+// FPS calculation
+static int64_t last_fps_time = 0;
+static int frame_count = 0;
+static int current_fps = 0;
+
+// Video file descriptor
+static int video_fd = -1;
+
+// ============================================================================
+// Camera Frame Callback
+// ============================================================================
+
 /**
- * @brief Initialize the shared I2C bus
+ * @brief Callback function called for each camera frame
  *
- * The I2C bus is shared between touch panel and camera.
+ * This function is called by the video component for each captured frame.
+ * It updates the UI with the new frame data.
  */
-static void init_i2c_bus(void)
+static void camera_frame_callback(uint8_t *camera_buf,
+                                   uint8_t camera_buf_index,
+                                   uint32_t camera_buf_hes,
+                                   uint32_t camera_buf_ves,
+                                   size_t camera_buf_len)
 {
-    ESP_LOGI(TAG, "Initializing I2C bus...");
+    // Calculate FPS
+    int64_t current_time = esp_timer_get_time();
+    frame_count++;
 
-    i2c_master_bus_config_t i2c_bus_conf = {
-        .i2c_port = I2C_PORT_NUM,
-        .sda_io_num = I2C_PIN_SDA,
-        .scl_io_num = I2C_PIN_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_conf, &i2c_bus_handle));
-
-    ESP_LOGI(TAG, "I2C bus initialized successfully");
-}
-
-// ============================================================================
-// STEP 1B: I/O EXPANDER INITIALIZATION (Controls LCD Reset)
-// ============================================================================
-/**
- * @brief Initialize the TCA9554 I/O Expander
- *
- * The Waveshare board uses a TCA9554 I/O expander to control the LCD reset.
- * PIN 1 of the expander is connected to the LCD reset line.
- */
-static void init_io_expander(void)
-{
-    ESP_LOGI(TAG, "Initializing I/O Expander (TCA9554)...");
-
-    // Create the TCA9554 I/O expander on the I2C bus
-    ESP_ERROR_CHECK(esp_io_expander_new_i2c_tca9554(
-        i2c_bus_handle,
-        ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000,
-        &io_expander_handle
-    ));
-
-    // Configure PIN 1 as output (LCD reset control)
-    ESP_ERROR_CHECK(esp_io_expander_set_dir(io_expander_handle, IO_EXPANDER_PIN_NUM_1, IO_EXPANDER_OUTPUT));
-
-    // Reset the LCD: pull low, wait, then pull high
-    ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander_handle, IO_EXPANDER_PIN_NUM_1, 0));
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP_ERROR_CHECK(esp_io_expander_set_level(io_expander_handle, IO_EXPANDER_PIN_NUM_1, 1));
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    ESP_LOGI(TAG, "I/O Expander initialized, LCD reset complete");
-}
-
-// ============================================================================
-// STEP 2: SPI BUS INITIALIZATION
-// ============================================================================
-/**
- * @brief Initialize the SPI bus for the LCD
- *
- * The LCD uses SPI (Serial Peripheral Interface) for communication.
- * SPI is fast and uses fewer pins than parallel interfaces.
- */
-static void init_spi_bus(void)
-{
-    ESP_LOGI(TAG, "Initializing SPI bus for LCD...");
-
-    // SPI bus configuration structure
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = LCD_PIN_MOSI,      // Master Out, Slave In (data to LCD)
-        .miso_io_num = LCD_PIN_MISO,      // Master In, Slave Out (data from LCD)
-        .sclk_io_num = LCD_PIN_CLK,       // Serial Clock
-        .quadwp_io_num = GPIO_NUM_NC,     // Not used (for quad SPI)
-        .quadhd_io_num = GPIO_NUM_NC,     // Not used (for quad SPI)
-        .max_transfer_sz = LCD_H_RES * LCD_V_RES * sizeof(uint16_t),
-    };
-
-    // Initialize the SPI bus
-    ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
-
-    ESP_LOGI(TAG, "SPI bus initialized successfully");
-}
-
-// ============================================================================
-// STEP 3: LCD PANEL INITIALIZATION
-// ============================================================================
-/**
- * @brief Initialize the LCD panel (ST7796)
- *
- * @param[out] panel_handle Pointer to store the panel handle
- * @param[out] io_handle Pointer to store the IO handle
- */
-static void init_lcd_panel(esp_lcd_panel_handle_t *panel_handle,
-                           esp_lcd_panel_io_handle_t *io_handle)
-{
-    ESP_LOGI(TAG, "Initializing LCD panel (ST7796)...");
-
-    // Configure the LCD backlight pin as output and turn it on
-    gpio_config_t bl_gpio_cfg = {
-        .pin_bit_mask = (1ULL << LCD_PIN_BL),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&bl_gpio_cfg);
-    gpio_set_level(LCD_PIN_BL, 1);  // Turn on backlight
-
-    // SPI device configuration for the LCD
-    esp_lcd_panel_io_spi_config_t io_config = {
-        .cs_gpio_num = LCD_PIN_CS,
-        .dc_gpio_num = LCD_PIN_DC,
-        .spi_mode = 0,                    // SPI mode 0 (CPOL=0, CPHA=0)
-        .pclk_hz = LCD_SPI_FREQ_HZ,
-        .trans_queue_depth = 10,
-        .lcd_cmd_bits = 8,                // Commands are 8 bits
-        .lcd_param_bits = 8,              // Parameters are 8 bits
-    };
-
-    // Create the SPI device for the LCD
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(
-        (esp_lcd_spi_bus_handle_t)LCD_SPI_HOST,
-        &io_config,
-        io_handle
-    ));
-
-    // ST7796 panel configuration
-    esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = LCD_PIN_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
-        .bits_per_pixel = 16,             // RGB565
-    };
-
-    // Create the ST7796 panel driver
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7796(*io_handle, &panel_config, panel_handle));
-
-    // Reset and initialize
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(*panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(*panel_handle));
-
-    // Invert colors (required for this display)
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(*panel_handle, true));
-
-    // Turn on the display
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(*panel_handle, true));
-
-    ESP_LOGI(TAG, "LCD panel initialized successfully");
-}
-
-// ============================================================================
-// STEP 4: TOUCH PANEL INITIALIZATION
-// ============================================================================
-/**
- * @brief Initialize the touch panel (FT6336/FT5x06)
- *
- * The FT6336 is a capacitive touch controller that communicates via I2C.
- *
- * @param[out] touch_handle Pointer to store the touch handle
- */
-static void init_touch_panel(esp_lcd_touch_handle_t *touch_handle)
-{
-    ESP_LOGI(TAG, "Initializing touch panel (FT6336)...");
-
-    // Touch panel IO configuration - manually configure for proper I2C speed
-    esp_lcd_panel_io_i2c_config_t io_config = {
-        .dev_addr = 0x38,                 // FT6336 I2C address
-        .scl_speed_hz = I2C_FREQ_HZ,      // Use our defined I2C frequency
-        .control_phase_bytes = 1,
-        .lcd_cmd_bits = 8,
-        .dc_bit_offset = 0,
-        .flags = {
-            .disable_control_phase = 1,
-        },
-    };
-
-    esp_lcd_panel_io_handle_t io_handle = NULL;
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus_handle, &io_config, &io_handle));
-
-    // FT6336 touch controller configuration
-    esp_lcd_touch_config_t touch_cfg = {
-        .x_max = LCD_H_RES,
-        .y_max = LCD_V_RES,
-        .rst_gpio_num = TOUCH_PIN_RST,
-        .int_gpio_num = TOUCH_PIN_INT,
-        .levels = {
-            .reset = 0,
-            .interrupt = 0,
-        },
-        .flags = {
-            .swap_xy = 0,
-            .mirror_x = 0,
-            .mirror_y = 0,
-        },
-    };
-
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft6336(io_handle, &touch_cfg, touch_handle));
-
-    ESP_LOGI(TAG, "Touch panel initialized successfully");
-}
-
-// ============================================================================
-// STEP 5: LVGL INITIALIZATION
-// ============================================================================
-/**
- * @brief Initialize LVGL graphics library
- */
-static void init_lvgl(esp_lcd_panel_handle_t panel_handle,
-                      esp_lcd_panel_io_handle_t io_handle,
-                      esp_lcd_touch_handle_t touch_handle)
-{
-    ESP_LOGI(TAG, "Initializing LVGL...");
-
-    // Initialize the LVGL port (handles LVGL tick and task)
-    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
-
-    // Configure LVGL display
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle = io_handle,
-        .panel_handle = panel_handle,
-        .buffer_size = LCD_H_RES * LCD_V_RES / 8,
-        .double_buffer = true,
-        .hres = LCD_H_RES,
-        .vres = LCD_V_RES,
-        .monochrome = false,
-        .rotation = {
-            .swap_xy = false,
-            .mirror_x = true,
-            .mirror_y = false,
-        },
-        .flags = {
-            .buff_dma = false,
-            .buff_spiram = true,
-            .sw_rotate = false,
-        },
-    };
-
-    // Add the display to LVGL
-    lvgl_disp = lvgl_port_add_disp(&disp_cfg);
-
-    // Configure LVGL touch input
-    if (touch_handle != NULL) {
-        const lvgl_port_touch_cfg_t touch_cfg = {
-            .disp = lvgl_disp,
-            .handle = touch_handle,
-        };
-        lvgl_port_add_touch(&touch_cfg);
+    if (current_time - last_fps_time >= 1000000) { // 1 second
+        current_fps = frame_count;
+        frame_count = 0;
+        last_fps_time = current_time;
     }
 
-    ESP_LOGI(TAG, "LVGL initialized successfully");
+    // Lock LVGL for thread-safe UI updates
+    if (lvgl_port_lock(10)) {
+        // Update camera frame in UI
+        bool grayscale = ui_camera_is_grayscale();
+        ui_camera_set_frame_format(camera_buf_hes, camera_buf_ves, camera_buf_len);
+        ui_camera_update_frame(camera_buf, camera_buf_len, grayscale);
+
+        // Update FPS display
+        ui_camera_update_fps(current_fps);
+
+        lvgl_port_unlock();
+    }
 }
 
 // ============================================================================
-// STEP 6: CAMERA INITIALIZATION
+// Initialization Functions
 // ============================================================================
+
 /**
- * @brief Initialize the camera (OV5640)
- *
- * The esp32-camera library handles all the low-level camera communication.
- * Camera shares the I2C bus with touch panel.
+ * @brief Initialize the display and LVGL via BSP
+ */
+static esp_err_t init_display(void)
+{
+    ESP_LOGI(TAG, "Initializing display via BSP...");
+
+    // Configure display with LVGL
+    bsp_display_cfg_t cfg = {
+        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+        .buffer_size = BSP_LCD_DRAW_BUFF_SIZE,
+        .double_buffer = BSP_LCD_DRAW_BUFF_DOUBLE,
+        .flags = {
+            .buff_dma = true,
+            .buff_spiram = false,
+            .sw_rotate = false,
+        }
+    };
+
+    lv_display_t *display = bsp_display_start_with_config(&cfg);
+    if (display == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize display");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Display initialized: %dx%d", BSP_LCD_H_RES, BSP_LCD_V_RES);
+    return ESP_OK;
+}
+
+/**
+ * @brief Initialize the camera via video component
  */
 static esp_err_t init_camera(void)
 {
-    ESP_LOGI(TAG, "Initializing camera (OV5640)...");
+    ESP_LOGI(TAG, "Initializing camera...");
 
-    // Camera configuration
-    camera_config_t camera_config = {
-        // Pin configuration (from board_config.h)
-        .pin_pwdn = CAM_PIN_PWDN,
-        .pin_reset = CAM_PIN_RESET,
-        .pin_xclk = CAM_PIN_XCLK,
-        .pin_sccb_sda = -1,           // Use existing I2C bus
-        .pin_sccb_scl = -1,           // Use existing I2C bus
+    // Get I2C bus handle from BSP (used for camera sensor communication)
+    i2c_master_bus_handle_t i2c_handle = bsp_i2c_get_handle();
 
-        .pin_d7 = CAM_PIN_D7,
-        .pin_d6 = CAM_PIN_D6,
-        .pin_d5 = CAM_PIN_D5,
-        .pin_d4 = CAM_PIN_D4,
-        .pin_d3 = CAM_PIN_D3,
-        .pin_d2 = CAM_PIN_D2,
-        .pin_d1 = CAM_PIN_D1,
-        .pin_d0 = CAM_PIN_D0,
-
-        .pin_vsync = CAM_PIN_VSYNC,
-        .pin_href = CAM_PIN_HREF,
-        .pin_pclk = CAM_PIN_PCLK,
-
-        // Clock frequency
-        .xclk_freq_hz = CAM_XCLK_FREQ_HZ,
-
-        // Use existing I2C bus (shared with touch)
-        .sccb_i2c_port = CAM_SCCB_I2C_PORT,
-
-        // Frame format - RGB565 for direct display
-        .pixel_format = PIXFORMAT_RGB565,
-
-        // Frame size - QVGA (320x240) fits nicely on the display
-        .frame_size = FRAMESIZE_QVGA,
-
-        // JPEG quality (only used if pixel_format is JPEG)
-        .jpeg_quality = 12,
-
-        // Number of frame buffers
-        .fb_count = 2,
-
-        // Location of frame buffers - PSRAM for larger buffers
-        .fb_location = CAMERA_FB_IN_PSRAM,
-
-        // Grab mode - get the most recent frame
-        .grab_mode = CAMERA_GRAB_LATEST,
-
-        // LEDC timer/channel for XCLK generation
-        .ledc_timer = LEDC_TIMER_0,
-        .ledc_channel = LEDC_CHANNEL_0,
-    };
-
-    // Initialize the camera
-    esp_err_t ret = esp_camera_init(&camera_config);
+    // Initialize video subsystem
+    esp_err_t ret = app_video_main(i2c_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Camera initialization failed with error 0x%x", ret);
+        ESP_LOGE(TAG, "Failed to initialize video system");
         return ret;
     }
 
-    // Get the camera sensor object to adjust settings
-    sensor_t *sensor = esp_camera_sensor_get();
-    if (sensor != NULL) {
-        // Flip the image vertically (required for this board)
-        sensor->set_vflip(sensor, 1);
+    // Open the camera device with RGB565 format
+    video_fd = app_video_open(CAM_DEV_PATH, APP_VIDEO_FMT);
+    if (video_fd < 0) {
+        ESP_LOGE(TAG, "Failed to open camera device");
+        return ESP_FAIL;
+    }
+
+    // Get actual resolution
+    uint32_t width, height;
+    ret = app_video_get_resolution(&width, &height);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Camera resolution: %lux%lu", width, height);
+    }
+
+    // Set up camera buffers
+    ret = app_video_set_bufs(video_fd, CAM_BUF_NUM, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set up camera buffers");
+        app_video_close(video_fd);
+        return ret;
+    }
+
+    // Register frame callback
+    ret = app_video_register_frame_operation_cb(camera_frame_callback);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register frame callback");
+        app_video_close(video_fd);
+        return ret;
     }
 
     ESP_LOGI(TAG, "Camera initialized successfully");
     return ESP_OK;
 }
 
-// ============================================================================
-// STEP 7: CAMERA STREAMING TASK
-// ============================================================================
 /**
- * @brief Task that captures camera frames and updates the display
+ * @brief Start the camera streaming task
  */
-static void camera_stream_task(void *param)
+static esp_err_t start_camera_stream(void)
 {
-    ESP_LOGI(TAG, "Starting camera stream task...");
+    ESP_LOGI(TAG, "Starting camera stream...");
 
-    camera_fb_t *fb = NULL;
-    uint32_t frame_count = 0;
-    int64_t last_fps_time = esp_timer_get_time();
+    // Initialize FPS counter
+    last_fps_time = esp_timer_get_time();
+    frame_count = 0;
 
-    while (1) {
-        // Capture a frame from the camera
-        fb = esp_camera_fb_get();
-        if (fb == NULL) {
-            ESP_LOGW(TAG, "Camera capture failed");
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-
-        // Make sure we got RGB565 format
-        if (fb->format == PIXFORMAT_RGB565) {
-            // Lock LVGL mutex
-            if (lvgl_port_lock(10)) {
-                // Update camera frame via UI API
-                bool grayscale = ui_camera_is_grayscale();
-                ui_camera_update_frame(fb->buf, fb->len, grayscale);
-
-                // Update FPS counter every second
-                frame_count++;
-                int64_t now = esp_timer_get_time();
-                if (now - last_fps_time >= 1000000) {  // 1 second in microseconds
-                    float fps = (float)frame_count * 1000000.0f / (float)(now - last_fps_time);
-                    ui_camera_update_fps((int)fps);
-                    frame_count = 0;
-                    last_fps_time = now;
-                }
-
-                lvgl_port_unlock();
-            }
-        }
-
-        // Return the frame buffer to the camera driver
-        esp_camera_fb_return(fb);
-
-        // Small delay to prevent task starvation
-        vTaskDelay(pdMS_TO_TICKS(10));
+    // Start video streaming task on core 1
+    esp_err_t ret = app_video_stream_task_start(video_fd, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start camera stream task");
+        return ret;
     }
+
+    ESP_LOGI(TAG, "Camera stream started");
+    return ESP_OK;
 }
 
 // ============================================================================
-// MAIN APPLICATION ENTRY POINT
+// Main Application
 // ============================================================================
-/**
- * @brief Main application entry point
- */
+
 void app_main(void)
 {
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "  Camera Stream Demo Starting...");
-    ESP_LOGI(TAG, "  Board: Waveshare ESP32-S3-Touch-LCD-3.5");
-    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "===========================================");
+    ESP_LOGI(TAG, "ESP32-P4 Camera Stream Demo");
+    ESP_LOGI(TAG, "Board: Waveshare ESP32-P4-WiFi6-Touch-LCD-4B");
+    ESP_LOGI(TAG, "===========================================");
 
-    // Handles for LCD and touch
-    esp_lcd_panel_handle_t panel_handle = NULL;
-    esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_lcd_touch_handle_t touch_handle = NULL;
+    // Log memory info
+    ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "Free PSRAM: %lu bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    // Step 1: Initialize shared I2C bus
-    init_i2c_bus();
+    // Initialize BSP I2C (shared by touch and camera)
+    ESP_ERROR_CHECK(bsp_i2c_init());
 
-    // Step 1B: Initialize I/O Expander (resets LCD via TCA9554)
-    init_io_expander();
+    // Initialize display and LVGL
+    ESP_ERROR_CHECK(init_display());
 
-    // Step 2: Initialize SPI bus
-    init_spi_bus();
+    // Lock LVGL for UI initialization
+    lvgl_port_lock(0);
 
-    // Step 3: Initialize LCD panel
-    init_lcd_panel(&panel_handle, &io_handle);
+    // Set up screen background
+    lv_obj_t *screen = lv_screen_active();
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x1a1a1a), LV_PART_MAIN);
 
-    // Step 4: Initialize touch panel
-    init_touch_panel(&touch_handle);
+    // Force initial render
+    lv_refr_now(NULL);
 
-    // Step 5: Initialize LVGL
-    init_lvgl(panel_handle, io_handle, touch_handle);
+    lvgl_port_unlock();
 
-    // Step 6: Initialize camera
+    // Small delay to ensure display is ready
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // Turn on backlight
+    bsp_display_brightness_set(80);
+
+    // Initialize UI component
+    lvgl_port_lock(0);
+    ESP_ERROR_CHECK(ui_init());
+    lvgl_port_unlock();
+
+    ESP_LOGI(TAG, "UI initialized");
+
+    // Initialize camera
     esp_err_t ret = init_camera();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Camera initialization failed! Check connections.");
+        ESP_LOGE(TAG, "Camera initialization failed, continuing without camera");
+    } else {
+        // Start camera streaming
+        ret = start_camera_stream();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start camera stream");
+        }
     }
 
-    // Step 7: Initialize UI and show camera screen
-    ui_init();
+    ESP_LOGI(TAG, "Application started successfully");
+    ESP_LOGI(TAG, "Free heap after init: %lu bytes", esp_get_free_heap_size());
 
-    // Step 8: Start camera streaming task (if camera initialized)
-    if (ret == ESP_OK) {
-        xTaskCreatePinnedToCore(
-            camera_stream_task,     // Task function
-            "camera_stream",        // Task name
-            4096,                   // Stack size (bytes)
-            NULL,                   // Task parameter
-            5,                      // Task priority
-            NULL,                   // Task handle (not needed)
-            1                       // CPU core (1 = APP core)
-        );
+    // Main loop - LVGL is handled by esp_lvgl_port
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "  Initialization complete!");
-    ESP_LOGI(TAG, "  Camera stream should appear on screen.");
-    ESP_LOGI(TAG, "========================================");
 }
